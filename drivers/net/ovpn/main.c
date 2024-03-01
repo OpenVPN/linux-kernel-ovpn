@@ -7,12 +7,16 @@
  *		James Yonan <james@openvpn.net>
  */
 
+#include <linux/genetlink.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
 #include <linux/version.h>
 #include <net/rtnetlink.h>
+#include <uapi/linux/ovpn.h>
 
+#include "ovpnstruct.h"
 #include "main.h"
+#include "netlink.h"
 #include "io.h"
 
 /* Driver info */
@@ -34,6 +38,7 @@ bool ovpn_dev_is_valid(const struct net_device *dev)
  * therefore ifaces should be destroyed when exiting a netns
  */
 static struct rtnl_link_ops ovpn_link_ops = {
+	.kind = OVPN_FAMILY_NAME,
 };
 
 static int ovpn_netdev_notifier_call(struct notifier_block *nb,
@@ -86,8 +91,16 @@ static int __init ovpn_init(void)
 		goto unreg_netdev;
 	}
 
+	err = ovpn_nl_register();
+	if (err) {
+		pr_err("ovpn: can't register netlink family: %d\n", err);
+		goto unreg_rtnl;
+	}
+
 	return 0;
 
+unreg_rtnl:
+	rtnl_link_unregister(&ovpn_link_ops);
 unreg_netdev:
 	unregister_netdevice_notifier(&ovpn_netdev_notifier);
 	return err;
@@ -95,6 +108,7 @@ unreg_netdev:
 
 static __exit void ovpn_cleanup(void)
 {
+	ovpn_nl_unregister();
 	rtnl_link_unregister(&ovpn_link_ops);
 	unregister_netdevice_notifier(&ovpn_netdev_notifier);
 

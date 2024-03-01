@@ -1,0 +1,327 @@
+# SPDX-License-Identifier: ((GPL-2.0 WITH Linux-syscall-note) OR BSD-3-Clause)
+#
+# Author: Antonio Quartulli <antonio@openvpn.net>
+#
+# Copyright (c) 2024, OpenVPN Inc.
+#
+
+name: ovpn
+
+protocol: genetlink
+
+doc: Netlink protocol to control OpenVPN network devices
+
+definitions:
+  -
+    type: const
+    name: nonce-tail-size
+    value: 8
+  -
+    type: enum
+    name: cipher-alg
+    value-start: 0
+    entries: [ none, aes-gcm, chacha20_poly1305 ]
+  -
+    type: enum
+    name: del-peer_reason
+    value-start: 0
+    entries: [ teardown, userspace, expired, transport-error, transport_disconnect ]
+  -
+    type: enum
+    name: key-slot
+    value-start: 0
+    entries: [ primary, secondary ]
+  -
+    type: enum
+    name: mode
+    value-start: 0
+    entries: [ p2p, mp ]
+
+attribute-sets:
+  -
+    name: peer
+    attributes:
+      -
+        name: id
+        type: u32
+        doc: |
+          The unique Id of the peer. To be used to identify peers during
+          operations
+        checks:
+          max: 0xFFFFFF
+      -
+        name: sockaddr-remote
+        type: binary
+        doc: |
+          The sockaddr_in/in6 object identifying the remote address/port of the
+          peer
+      -
+        name: socket
+        type: u32
+        doc: The socket to be used to communicate with the peer
+      -
+        name: vpn-ipv4
+        type: u32
+        doc: The IPv4 assigned to the peer by the server
+        display-hint: ipv4
+      -
+        name: vpn-ipv6
+        type: binary
+        doc: The IPv6 assigned to the peer by the server
+        display-hint: ipv6
+        checks:
+          exact-len: 16
+      -
+        name: local-ip
+        type: binary
+        doc: The local IP to be used to send packets to the peer (UDP only)
+        checks:
+          max-len: 16
+      -
+        name: local-port
+        type: u32
+        doc: The local port to be used to send packets to the peer (UDP only)
+        checks:
+          min: 1
+          max: u16-max
+      -
+        name: keepalive-interval
+        type: u32
+        doc: |
+          The number of seconds after which a keep alive message is sent to the
+          peer
+      -
+        name: keepalive-timeout
+        type: u32
+        doc: |
+          The number of seconds from the last activity after which the peer is
+          assumed dead
+      -
+        name: del-reason
+        type: u32
+        doc: The reason why a peer was deleted
+        enum: del-peer_reason
+      -
+        name: keyconf
+        type: nest
+        doc: Peer specific cipher configuration
+        nested-attributes: keyconf
+      -
+        name: vpn-rx_bytes
+        type: uint
+        doc: Number of bytes received over the tunnel
+      -
+        name: vpn-tx_bytes
+        type: uint
+        doc: Number of bytes transmitted over the tunnel
+      -
+        name: vpn-rx_packets
+        type: uint
+        doc: Number of packets received over the tunnel
+      -
+        name: vpn-tx_packets
+        type: uint
+        doc: Number of packets transmitted over the tunnel
+      -
+        name: link-rx_bytes
+        type: uint
+        doc: Number of bytes received at the transport level
+      -
+        name: link-tx_bytes
+        type: uint
+        doc: Number of bytes transmitted at the transport level
+      -
+        name: link-rx_packets
+        type: u32
+        doc: Number of packets received at the transport level
+      -
+        name: link-tx_packets
+        type: u32
+        doc: Number of packets transmitted at the transport level
+  -
+    name: keyconf
+    attributes:
+      -
+        name: slot
+        type: u32
+        doc: The slot where the key should be stored
+        enum: key-slot
+      -
+        name: key-id
+        doc: |
+          The unique ID for the key. Used to fetch the correct key upon
+          decryption
+        type: u32
+        checks:
+          max: 2
+      -
+        name: cipher-alg
+        type: u32
+        doc: The cipher to be used when communicating with the peer
+        enum: cipher-alg
+      -
+        name: encrypt-dir
+        type: nest
+        doc: Key material for encrypt direction
+        nested-attributes: keydir
+      -
+        name: decrypt-dir
+        type: nest
+        doc: Key material for decrypt direction
+        nested-attributes: keydir
+  -
+    name: keydir
+    attributes:
+      -
+        name: cipher-key
+        type: binary
+        doc: The actual key to be used by the cipher
+        checks:
+         max-len: 256
+      -
+        name: nonce-tail
+        type: binary
+        doc: |
+          Random nonce to be concatenated to the packet ID, in order to
+          obtain the actua cipher IV
+        checks:
+         exact-len: nonce-tail-size
+  -
+    name: ovpn
+    attributes:
+      -
+        name: ifindex
+        type: u32
+        doc: Index of the ovpn interface to operate on
+      -
+        name: ifname
+        type: string
+        doc: Name of the ovpn interface that is being created
+      -
+        name: mode
+        type: u32
+        enum: mode
+        doc: |
+          Oper mode instructing an interface to act as Point2Point or
+          MultiPoint
+      -
+        name: peer
+        type: nest
+        doc: |
+          The peer object containing the attributed of interest for the specific
+          operation
+        nested-attributes: peer
+
+operations:
+  list:
+    -
+      name: new-iface
+      attribute-set: ovpn
+      flags: [ admin-perm ]
+      doc: Create a new interface
+      do:
+        request:
+          attributes:
+            - ifname
+            - mode
+        reply:
+          attributes:
+            - ifname
+    -
+      name: del-iface
+      attribute-set: ovpn
+      flags: [ admin-perm ]
+      doc: Delete existing interface
+      do:
+        pre: ovpn-nl-pre-doit
+        post: ovpn-nl-post-doit
+        request:
+          attributes:
+            - ifindex
+    -
+      name: set-peer
+      attribute-set: ovpn
+      flags: [ admin-perm ]
+      doc: Add or modify a remote peer
+      do:
+        pre: ovpn-nl-pre-doit
+        post: ovpn-nl-post-doit
+        request:
+          attributes:
+            - ifindex
+            - peer
+    -
+      name: get-peer
+      attribute-set: ovpn
+      flags: [ admin-perm ]
+      doc: Retrieve data about existing remote peers (or a specific one)
+      do:
+        pre: ovpn-nl-pre-doit
+        post: ovpn-nl-post-doit
+        request:
+          attributes:
+            - ifindex
+            - peer
+        reply:
+          attributes:
+            - peer
+      dump:
+        request:
+          attributes:
+            - ifindex
+        reply:
+          attributes:
+            - peer
+    -
+      name: del-peer
+      attribute-set: ovpn
+      flags: [ admin-perm ]
+      doc: Delete existing remote peer
+      do:
+        pre: ovpn-nl-pre-doit
+        post: ovpn-nl-post-doit
+        request:
+          attributes:
+            - ifindex
+            - peer
+    -
+      name: set-key
+      attribute-set: ovpn
+      flags: [ admin-perm ]
+      doc: Add or modify a cipher key for a specific peer
+      do:
+        pre: ovpn-nl-pre-doit
+        post: ovpn-nl-post-doit
+        request:
+          attributes:
+            - ifindex
+            - peer
+    -
+      name: swap-keys
+      attribute-set: ovpn
+      flags: [ admin-perm ]
+      doc: Swap primary and secondary session keys for a specific peer
+      do:
+        pre: ovpn-nl-pre-doit
+        post: ovpn-nl-post-doit
+        request:
+          attributes:
+            - ifindex
+            - peer
+    -
+      name: del-key
+      attribute-set: ovpn
+      flags: [ admin-perm ]
+      doc: Delete cipher key for a specific peer
+      do:
+        pre: ovpn-nl-pre-doit
+        post: ovpn-nl-post-doit
+        request:
+          attributes:
+            - ifindex
+            - peer
+
+mcast-groups:
+  list:
+    -
+      name: peers
