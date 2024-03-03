@@ -21,6 +21,7 @@
 #include "netlink.h"
 #include "io.h"
 #include "packet.h"
+#include "peer.h"
 
 /* Driver info */
 #define DRV_DESCRIPTION	"OpenVPN data channel offload (ovpn)"
@@ -37,10 +38,16 @@ static void ovpn_struct_init(struct net_device *dev, enum ovpn_mode mode)
 
 	ovpn->dev = dev;
 	ovpn->mode = mode;
+	spin_lock_init(&ovpn->lock);
 }
 
 static void ovpn_struct_free(struct net_device *net)
 {
+}
+
+static int ovpn_net_init(struct net_device *dev)
+{
+	return 0;
 }
 
 static int ovpn_net_open(struct net_device *dev)
@@ -63,6 +70,7 @@ static int ovpn_net_stop(struct net_device *dev)
 }
 
 static const struct net_device_ops ovpn_netdev_ops = {
+	.ndo_init		= ovpn_net_init,
 	.ndo_open		= ovpn_net_open,
 	.ndo_stop		= ovpn_net_stop,
 	.ndo_start_xmit		= ovpn_net_xmit,
@@ -183,6 +191,9 @@ void ovpn_iface_destruct(struct ovpn_struct *ovpn)
 	netif_carrier_off(ovpn->dev);
 
 	ovpn->registered = false;
+
+	if (ovpn->mode == OVPN_MODE_P2P)
+		ovpn_peer_release_p2p(ovpn);
 }
 
 static int ovpn_netdev_notifier_call(struct notifier_block *nb,
