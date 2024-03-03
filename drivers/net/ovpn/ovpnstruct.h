@@ -17,12 +17,16 @@
  * @dev: the actual netdev representing the tunnel
  * @registered: whether dev is still registered with netdev or not
  * @mode: device operation mode (i.e. p2p, mp, ..)
+ * @lock: protect this object
+ * @peer: in P2P mode, this is the only remote peer
  * @dev_list: entry for the module wide device list
  */
 struct ovpn_struct {
 	struct net_device *dev;
 	bool registered;
 	enum ovpn_mode mode;
+	spinlock_t lock; /* protect writing to the ovpn_struct object */
+	struct ovpn_peer __rcu *peer;
 	struct list_head dev_list;
 };
 
