@@ -153,7 +153,7 @@ attribute-sets:
           decryption
         type: u32
         checks:
-          max: 2
+          max: 7
       -
         name: cipher-alg
         type: u32
