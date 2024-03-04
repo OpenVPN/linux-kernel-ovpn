@@ -12,4 +12,12 @@
 int ovpn_nl_register(void);
 void ovpn_nl_unregister(void);
 
+/**
+ * ovpn_nl_notify_swap_keys - notify userspace peer's key must be renewed
+ * @peer: the peer whose key needs to be renewed
+ *
+ * Return: 0 on success or a negative error code otherwise
+ */
+int ovpn_nl_notify_swap_keys(struct ovpn_peer *peer);
+
 #endif /* _NET_OVPN_NETLINK_H_ */
