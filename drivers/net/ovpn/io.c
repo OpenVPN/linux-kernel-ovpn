@@ -119,6 +119,11 @@ void ovpn_decrypt_post(struct sk_buff *skb, int ret)
 	/* note event of authenticated packet received for keepalive */
 	ovpn_peer_keepalive_recv_reset(peer);
 
+	if (peer->sock->sock->sk->sk_protocol == IPPROTO_UDP) {
+		/* update source endpoint for this peer */
+		ovpn_peer_update_local_endpoint(peer, skb);
+	}
+
 	/* point to encapsulated IP packet */
 	__skb_pull(skb, ovpn_skb_cb(skb)->payload_offset);
 

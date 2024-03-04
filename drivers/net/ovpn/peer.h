@@ -189,4 +189,7 @@ static inline void ovpn_peer_keepalive_xmit_reset(struct ovpn_peer *peer)
 
 void ovpn_peer_keepalive_set(struct ovpn_peer *peer, u32 interval, u32 timeout);
 
+void ovpn_peer_update_local_endpoint(struct ovpn_peer *peer,
+				     struct sk_buff *skb);
+
 #endif /* _NET_OVPN_OVPNPEER_H_ */
