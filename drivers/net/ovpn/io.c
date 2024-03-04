@@ -120,6 +120,10 @@ void ovpn_decrypt_post(struct sk_buff *skb, int ret)
 	ovpn_peer_keepalive_recv_reset(peer);
 
 	if (peer->sock->sock->sk->sk_protocol == IPPROTO_UDP) {
+		/* check if this peer changed it's IP address and update
+		 * state
+		 */
+		ovpn_peer_float(peer, skb);
 		/* update source endpoint for this peer */
 		ovpn_peer_update_local_endpoint(peer, skb);
 	}
