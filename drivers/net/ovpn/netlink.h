@@ -13,6 +13,14 @@ int ovpn_nl_register(void);
 void ovpn_nl_unregister(void);
 
 /**
+ * ovpn_nl_notify_del_peer - notify userspace about peer being deleted
+ * @peer: the peer being deleted
+ *
+ * Return: 0 on success or a negative error code otherwise
+ */
+int ovpn_nl_notify_del_peer(struct ovpn_peer *peer);
+
+/**
  * ovpn_nl_notify_swap_keys - notify userspace peer's key must be renewed
  * @peer: the peer whose key needs to be renewed
  *

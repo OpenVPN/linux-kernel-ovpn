@@ -273,6 +273,7 @@ void ovpn_peer_release_kref(struct kref *kref)
 
 	ovpn_peer_release(peer);
 	netdev_put(peer->ovpn->dev, NULL);
+	ovpn_nl_notify_del_peer(peer);
 	kfree_rcu(peer, rcu);
 }
 

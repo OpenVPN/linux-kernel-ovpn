@@ -129,6 +129,7 @@ static inline bool ovpn_peer_hold(struct ovpn_peer *peer)
 
 void ovpn_peer_release(struct ovpn_peer *peer);
 void ovpn_peer_release_kref(struct kref *kref);
+void ovpn_peer_release(struct ovpn_peer *peer);
 
 /**
  * ovpn_peer_put - decrease reference counter
