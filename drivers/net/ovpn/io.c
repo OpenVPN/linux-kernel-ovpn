@@ -21,6 +21,7 @@
 #include "netlink.h"
 #include "proto.h"
 #include "socket.h"
+#include "tcp.h"
 #include "udp.h"
 #include "skb.h"
 
@@ -84,8 +85,11 @@ void ovpn_decrypt_post(struct sk_buff *skb, int ret)
 	/* PID sits after the op */
 	pid = (__force __be32 *)(skb->data + OVPN_OP_SIZE_V2);
 	ret = ovpn_pktid_recv(&ks->pid_recv, ntohl(*pid), 0);
-	if (unlikely(ret < 0))
+	if (unlikely(ret < 0)) {
+		net_err_ratelimited("%s: PKT ID RX error: %d\n",
+				    peer->ovpn->dev->name, ret);
 		goto drop;
+	}
 
 	/* point to encapsulated IP packet */
 	__skb_pull(skb, ovpn_skb_cb(skb)->payload_offset);
@@ -191,6 +195,9 @@ void ovpn_encrypt_post(struct sk_buff *skb, int ret)
 	switch (peer->sock->sock->sk->sk_protocol) {
 	case IPPROTO_UDP:
 		ovpn_udp_send_skb(peer->ovpn, peer, skb);
+		break;
+	case IPPROTO_TCP:
+		ovpn_tcp_send_skb(peer, skb);
 		break;
 	default:
 		/* no transport configured yet */
