@@ -48,13 +48,53 @@ static void ovpn_struct_free(struct net_device *net)
 	struct ovpn_struct *ovpn = netdev_priv(net);
 
 	gro_cells_destroy(&ovpn->gro_cells);
+	kfree(ovpn->peers);
 }
 
 static int ovpn_net_init(struct net_device *dev)
 {
 	struct ovpn_struct *ovpn = netdev_priv(dev);
+	struct in_device *dev_v4;
+	int i, err;
 
-	return gro_cells_init(&ovpn->gro_cells, dev);
+	err = gro_cells_init(&ovpn->gro_cells, dev);
+	if (err)
+		return err;
+
+	if (ovpn->mode == OVPN_MODE_MP) {
+		dev_v4 = __in_dev_get_rtnl(dev);
+		if (dev_v4) {
+			/* disable redirects as Linux gets confused by ovpn
+			 * handling same-LAN routing.
+			 * This happens because a multipeer interface is used as
+			 * relay point between hosts in the same subnet, while
+			 * in a classic LAN this would not be needed because the
+			 * two hosts would be able to talk directly.
+			 */
+			IN_DEV_CONF_SET(dev_v4, SEND_REDIRECTS, false);
+			IPV4_DEVCONF_ALL(dev_net(dev), SEND_REDIRECTS) = false;
+		}
+
+		/* the peer container is fairly large, therefore we dynamically
+		 * allocate it only when needed
+		 */
+		ovpn->peers = kzalloc(sizeof(*ovpn->peers), GFP_KERNEL);
+		if (!ovpn->peers) {
+			gro_cells_destroy(&ovpn->gro_cells);
+			return -ENOMEM;
+		}
+
+		spin_lock_init(&ovpn->peers->lock);
+
+		for (i = 0; i < ARRAY_SIZE(ovpn->peers->by_id); i++) {
+			INIT_HLIST_HEAD(&ovpn->peers->by_id[i]);
+			INIT_HLIST_NULLS_HEAD(&ovpn->peers->by_vpn_addr[i], i);
+			INIT_HLIST_NULLS_HEAD(&ovpn->peers->by_transp_addr[i],
+					      i);
+		}
+	}
+
+	return 0;
 }
 
 static int ovpn_net_open(struct net_device *dev)
@@ -199,8 +239,14 @@ void ovpn_iface_destruct(struct ovpn_struct *ovpn)
 
 	ovpn->registered = false;
 
-	if (ovpn->mode == OVPN_MODE_P2P)
+	switch (ovpn->mode) {
+	case OVPN_MODE_P2P:
 		ovpn_peer_release_p2p(ovpn);
+		break;
+	default:
+		ovpn_peers_free(ovpn);
+		break;
+	}
 }
 
 static int ovpn_netdev_notifier_call(struct notifier_block *nb,
