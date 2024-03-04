@@ -19,6 +19,10 @@
 
 struct ovpn_cb {
 	struct ovpn_peer *peer;
+	struct sk_buff *skb;
+	struct ovpn_crypto_key_slot *ks;
+	struct aead_request *req;
+	unsigned int payload_offset;
 };
 
 static inline struct ovpn_cb *ovpn_skb_cb(struct sk_buff *skb)

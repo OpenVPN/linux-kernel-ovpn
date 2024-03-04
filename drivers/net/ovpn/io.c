@@ -15,6 +15,8 @@
 #include "ovpnstruct.h"
 #include "peer.h"
 #include "io.h"
+#include "crypto.h"
+#include "crypto_aead.h"
 #include "netlink.h"
 #include "proto.h"
 #include "udp.h"
@@ -57,12 +59,66 @@ static void ovpn_netdev_write(struct ovpn_peer *peer, struct sk_buff *skb)
 		dev_core_stats_rx_dropped_inc(peer->ovpn->dev);
 }
 
-static void ovpn_decrypt_post(struct sk_buff *skb, int ret)
+void ovpn_decrypt_post(struct sk_buff *skb, int ret)
 {
+	struct ovpn_crypto_key_slot *ks = ovpn_skb_cb(skb)->ks;
 	struct ovpn_peer *peer = ovpn_skb_cb(skb)->peer;
+	__be16 proto;
+	__be32 *pid;
 
+	/* crypto is happening asyncronously. this function will be called
+	 * again later by the crypto callback with a proper return code
+	 */
+	if (unlikely(ret == -EINPROGRESS))
+		return;
+
+	if (unlikely(ret < 0)) {
+		net_err_ratelimited("%s: error during decryption for peer %u, key-id %u: %d\n",
+				    peer->ovpn->dev->name, peer->id, ks->key_id,
+				    ret);
+		goto drop;
+	}
+
+	/* PID sits after the op */
+	pid = (__force __be32 *)(skb->data + OVPN_OP_SIZE_V2);
+	ret = ovpn_pktid_recv(&ks->pid_recv, ntohl(*pid), 0);
 	if (unlikely(ret < 0))
 		goto drop;
+
+	/* point to encapsulated IP packet */
+	__skb_pull(skb, ovpn_skb_cb(skb)->payload_offset);
+
+	/* check if this is a valid datapacket that has to be delivered to the
+	 * ovpn interface
+	 */
+	skb_reset_network_header(skb);
+	proto = ovpn_ip_check_protocol(skb);
+	if (unlikely(!proto)) {
+		/* check if null packet */
+		if (unlikely(!pskb_may_pull(skb, 1))) {
+			net_info_ratelimited("%s: NULL packet received from peer %u\n",
+					     peer->ovpn->dev->name, peer->id);
+			goto drop;
+		}
+
+		net_info_ratelimited("%s: unsupported protocol received from peer %u\n",
+				     peer->ovpn->dev->name, peer->id);
+		goto drop;
+	}
+	skb->protocol = proto;
+
+	/* perform Reverse Path Filtering (RPF) */
+	if (unlikely(!ovpn_peer_check_by_src(peer->ovpn, skb, peer))) {
+		if (skb_protocol_to_family(skb) == AF_INET6)
+			net_dbg_ratelimited("%s: RPF dropped packet from peer %u, src: %pI6c\n",
+					    peer->ovpn->dev->name, peer->id,
+					    &ipv6_hdr(skb)->saddr);
+		else
+			net_dbg_ratelimited("%s: RPF dropped packet from peer %u, src: %pI4\n",
+					    peer->ovpn->dev->name, peer->id,
+					    &ip_hdr(skb)->saddr);
+		goto drop;
+	}
 
 	ovpn_netdev_write(peer, skb);
 	/* skb is passed to upper layer - don't free it */
@@ -77,13 +133,44 @@ drop:
 /* pick next packet from RX queue, decrypt and forward it to the device */
 void ovpn_recv(struct ovpn_peer *peer, struct sk_buff *skb)
 {
+	struct ovpn_crypto_key_slot *ks;
+	u8 key_id;
+
+	/* get the key slot matching the key ID in the received packet */
+	key_id = ovpn_key_id_from_skb(skb);
+	ks = ovpn_crypto_key_id_to_slot(&peer->crypto, key_id);
+	if (unlikely(!ks)) {
+		net_info_ratelimited("%s: no available key for peer %u, key-id: %u\n",
+				     peer->ovpn->dev->name, peer->id, key_id);
+		dev_core_stats_rx_dropped_inc(peer->ovpn->dev);
+		kfree_skb(skb);
+		return;
+	}
+
 	ovpn_skb_cb(skb)->peer = peer;
-	ovpn_decrypt_post(skb, 0);
+	ovpn_decrypt_post(skb, ovpn_aead_decrypt(ks, skb));
 }
 
-static void ovpn_encrypt_post(struct sk_buff *skb, int ret)
+void ovpn_encrypt_post(struct sk_buff *skb, int ret)
 {
+	struct ovpn_crypto_key_slot *ks = ovpn_skb_cb(skb)->ks;
 	struct ovpn_peer *peer = ovpn_skb_cb(skb)->peer;
+
+	/* encryption is happening asynchronously. This function will be
+	 * called later by the crypto callback with a proper return value
+	 */
+	if (unlikely(ret == -EINPROGRESS))
+		return;
+
+	if (unlikely(ret == -ERANGE)) {
+		/* we ran out of IVs and we must kill the key as it can't be
+		 * usea nymore
+		 */
+		netdev_warn(peer->ovpn->dev,
+			    "killing primary key for peer %u\n", peer->id);
+		ovpn_crypto_kill_primary(&peer->crypto);
+		goto err;
+	}
 
 	if (unlikely(ret < 0))
 		goto err;
@@ -105,18 +192,36 @@ err:
 		dev_core_stats_tx_dropped_inc(peer->ovpn->dev);
 		kfree_skb(skb);
 	}
+	ovpn_crypto_key_slot_put(ks);
 	ovpn_peer_put(peer);
 }
 
 static bool ovpn_encrypt_one(struct ovpn_peer *peer, struct sk_buff *skb)
 {
+	struct ovpn_crypto_key_slot *ks;
+
+	if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL &&
+		     skb_checksum_help(skb))) {
+		net_warn_ratelimited("%s: cannot compute checksum for outgoing packet\n",
+				     peer->ovpn->dev->name);
+		return false;
+	}
+
+	/* get primary key to be used for encrypting data */
+	ks = ovpn_crypto_key_slot_primary(&peer->crypto);
+	if (unlikely(!ks)) {
+		net_warn_ratelimited("%s: error while retrieving primary key slot for peer %u\n",
+				     peer->ovpn->dev->name, peer->id);
+		return false;
+	}
+
 	ovpn_skb_cb(skb)->peer = peer;
 
 	/* take a reference to the peer because the crypto code may run async.
 	 * ovpn_encrypt_post() will release it upon completion
 	 */
 	DEBUG_NET_WARN_ON_ONCE(!ovpn_peer_hold(peer));
-	ovpn_encrypt_post(skb, 0);
+	ovpn_encrypt_post(skb, ovpn_aead_encrypt(ks, skb, peer->id));
 	return true;
 }
 
