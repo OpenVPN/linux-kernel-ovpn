@@ -41,6 +41,7 @@ static void ovpn_struct_init(struct net_device *dev, enum ovpn_mode mode)
 	ovpn->dev = dev;
 	ovpn->mode = mode;
 	spin_lock_init(&ovpn->lock);
+	INIT_DELAYED_WORK(&ovpn->keepalive_work, ovpn_peer_keepalive_work);
 }
 
 static void ovpn_struct_free(struct net_device *net)
@@ -238,6 +239,8 @@ void ovpn_iface_destruct(struct ovpn_struct *ovpn)
 	netif_carrier_off(ovpn->dev);
 
 	ovpn->registered = false;
+
+	cancel_delayed_work_sync(&ovpn->keepalive_work);
 
 	switch (ovpn->mode) {
 	case OVPN_MODE_P2P:
