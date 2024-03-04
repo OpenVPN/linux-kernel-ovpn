@@ -249,6 +249,7 @@ void ovpn_peer_release_kref(struct kref *kref)
 
 	if (peer->sock)
 		ovpn_socket_put(peer->sock);
+	ovpn_nl_peer_del_notify(peer);
 	call_rcu(&peer->rcu, ovpn_peer_release_rcu);
 }
 
