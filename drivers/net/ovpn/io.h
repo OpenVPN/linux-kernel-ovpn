@@ -13,6 +13,7 @@
 netdev_tx_t ovpn_net_xmit(struct sk_buff *skb, struct net_device *dev);
 
 void ovpn_recv(struct ovpn_peer *peer, struct sk_buff *skb);
+void ovpn_keepalive_xmit(struct ovpn_peer *peer);
 
 void ovpn_encrypt_post(struct sk_buff *skb, int ret);
 void ovpn_decrypt_post(struct sk_buff *skb, int ret);

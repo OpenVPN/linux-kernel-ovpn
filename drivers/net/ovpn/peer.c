@@ -23,6 +23,63 @@
 #include "socket.h"
 
 /**
+ * ovpn_peer_ping - timer task for sending periodic keepalive
+ * @t: timer object that triggered the task
+ */
+static void ovpn_peer_ping(struct timer_list *t)
+{
+	struct ovpn_peer *peer = from_timer(peer, t, keepalive_xmit);
+
+	netdev_dbg(peer->ovpn->dev, "%s: sending ping to peer %u\n", __func__,
+		   peer->id);
+	ovpn_keepalive_xmit(peer);
+}
+
+/**
+ * ovpn_peer_expire - timer task for incoming keepialive timeout
+ * @t: the timer that triggered the task
+ */
+static void ovpn_peer_expire(struct timer_list *t)
+{
+	struct ovpn_peer *peer = from_timer(peer, t, keepalive_recv);
+
+	netdev_dbg(peer->ovpn->dev, "%s: peer %u expired\n", __func__,
+		   peer->id);
+	ovpn_peer_del(peer, OVPN_DEL_PEER_REASON_EXPIRED);
+}
+
+/**
+ * ovpn_peer_keepalive_set - configure keepalive values for peer
+ * @peer: the peer to configure
+ * @interval: outgoing keepalive interval
+ * @timeout: incoming keepalive timeout
+ */
+void ovpn_peer_keepalive_set(struct ovpn_peer *peer, u32 interval, u32 timeout)
+{
+	u32 delta;
+
+	netdev_dbg(peer->ovpn->dev,
+		   "%s: scheduling keepalive for peer %u: interval=%u timeout=%u\n",
+		   __func__, peer->id, interval, timeout);
+
+	peer->keepalive_interval = interval;
+	if (interval > 0) {
+		delta = msecs_to_jiffies(interval * MSEC_PER_SEC);
+		mod_timer(&peer->keepalive_xmit, jiffies + delta);
+	} else {
+		timer_delete(&peer->keepalive_xmit);
+	}
+
+	peer->keepalive_timeout = timeout;
+	if (timeout) {
+		delta = msecs_to_jiffies(timeout * MSEC_PER_SEC);
+		mod_timer(&peer->keepalive_recv, jiffies + delta);
+	} else {
+		timer_delete(&peer->keepalive_recv);
+	}
+}
+
+/**
  * ovpn_peer_new - allocate and initialize a new peer object
  * @ovpn: the openvpn instance inside which the peer should be created
  * @id: the ID assigned to this peer
@@ -63,7 +120,20 @@ struct ovpn_peer *ovpn_peer_new(struct ovpn_struct *ovpn, u32 id)
 
 	netdev_hold(ovpn->dev, NULL, GFP_KERNEL);
 
+	timer_setup(&peer->keepalive_xmit, ovpn_peer_ping, 0);
+	timer_setup(&peer->keepalive_recv, ovpn_peer_expire, 0);
+
 	return peer;
+}
+
+/**
+ * ovpn_peer_timer_delete_all - killall keepalive timers
+ * @peer: peer for which timers should be killed
+ */
+static void ovpn_peer_timer_delete_all(struct ovpn_peer *peer)
+{
+	timer_shutdown_sync(&peer->keepalive_xmit);
+	timer_shutdown_sync(&peer->keepalive_recv);
 }
 
 /**
@@ -77,6 +147,8 @@ static void ovpn_peer_release(struct ovpn_peer *peer)
 
 	ovpn_crypto_state_release(&peer->crypto);
 	ovpn_bind_reset(peer, NULL);
+	ovpn_peer_timer_delete_all(peer);
+
 	dst_cache_destroy(&peer->dst_cache);
 }
 
