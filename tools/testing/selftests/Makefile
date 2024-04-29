@@ -64,6 +64,7 @@ TARGETS += net/forwarding
 TARGETS += net/hsr
 TARGETS += net/mptcp
 TARGETS += net/openvswitch
+TARGETS += net/ovpn
 TARGETS += net/tcp_ao
 TARGETS += net/netfilter
 TARGETS += nsfs
