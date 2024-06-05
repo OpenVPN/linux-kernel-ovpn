@@ -453,8 +453,12 @@ static void __rtnl_kill_links(struct net *net, struct rtnl_link_ops *ops)
 	LIST_HEAD(list_kill);
 
 	for_each_netdev(net, dev) {
-		if (dev->rtnl_link_ops == ops)
-			ops->dellink(dev, &list_kill);
+		if (dev->rtnl_link_ops == ops) {
+			if (ops->dellink)
+				ops->dellink(dev, &list_kill);
+			else
+				unregister_netdevice_queue(dev, &list_kill);
+		}
 	}
 	unregister_netdevice_many(&list_kill);
 }
